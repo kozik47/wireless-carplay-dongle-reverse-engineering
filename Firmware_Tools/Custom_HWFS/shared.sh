@@ -17,12 +17,12 @@
 
 # Shared helper runner function
 run() {
-    if [ "$VERBOSE" = true ]; then
+    if [[ "${VERBOSE}" == true ]]; then
         echo "+ $*"
         "$@" 2>&1 | awk '{print "  " $0}'
         local status="${PIPESTATUS[0]}"
-        if [ "$status" -ne 0 ]; then
-            exit "$status"
+        if [[ "${status}" -ne 0 ]]; then
+            exit "${status}"
         fi
     else
         "$@" >/dev/null 2>&1
@@ -31,7 +31,7 @@ run() {
 
 # Verbose echo function
 vecho() {
-    if [ "$VERBOSE" = true ]; then
+    if [[ "${VERBOSE}" == true ]]; then
         echo "$@"
     fi
 }

@@ -15,21 +15,21 @@
 # The above copyright notice and this permission notice shall be included in
 # all copies or substantial portions of the Software.
 
-set -e
+set -euo pipefail
 
 apply_sed_patch() {
     local file="${1}"
     local sed_expr="${2}"
 
-    if [ ! -f "${file}" ]; then
+    if [[ ! -f "${file}" ]]; then
         echo "Error: File '${file}' does not exist."
         exit 1
     fi
 
-    run cp -p "${file}" "${file}.bak"
-    run sed -i "${sed_expr}" "${file}"
+    cp -p "${file}" "${file}.bak"
+    sed "${SED_FLAG}" "${sed_expr}" "${file}"
 
-    if [ "$VERBOSE" = true ]; then
+    if [[ "${VERBOSE}" == true ]]; then
         echo "Diff for '${file}':"
         diff -u "${file}.bak" "${file}" | sed 's/^/  /' || true
         echo ""
@@ -40,7 +40,7 @@ apply_sed_patch() {
         mv "${file}.bak" "${file}"
         exit 1
     fi
-    run rm "${file}.bak"
+    rm "${file}.bak"
     ((PATCH_COUNT+=1))
 }
 
@@ -48,16 +48,16 @@ copy_dropbear_bins() {
     vecho "Copying Dropbear binaries to usr/sbin/"
     local bins=(dropbear scp sftp-server)
     for bin in "${bins[@]}"; do
-        if [ ! -f "${SCRIPT_DIR}/bins/${bin}" ]; then
+        if [[ ! -f "${SCRIPT_DIR}/bins/${bin}" ]]; then
             echo "Error: Binary '${SCRIPT_DIR}/bins/${bin}' does not exist."
             exit 1
         fi
-        run cp -p "${SCRIPT_DIR}/bins/${bin}" "usr/sbin/"
+        cp -p "${SCRIPT_DIR}/bins/${bin}" "usr/sbin/"
     done
 
     vecho "Creating symlink for sftp-server in usr/libexec/"
-    run mkdir -p -m 775 "usr/libexec"
-    run ln -sf "../sbin/sftp-server" "usr/libexec/sftp-server"
+    mkdir -p -m 775 "usr/libexec"
+    ln -sf "../sbin/sftp-server" "usr/libexec/sftp-server"
 }
 
 patch_rcS() {
@@ -86,15 +86,15 @@ create_passwd_and_shadow() {
     local passwd_file="etc/passwd"
     local shadow_file="etc/shadow"
 
-    run cat <<EOF > "${passwd_file}"
+    cat <<EOF > "${passwd_file}"
 root::0:0:root:/root:/bin/sh
 EOF
 
-    run cat <<EOF > "${shadow_file}"
+    cat <<EOF > "${shadow_file}"
 root::14610:0:99999:7:::
 EOF
 
-    run chmod 644 "${passwd_file}" "${shadow_file}"
+    chmod 644 "${passwd_file}" "${shadow_file}"
 }
 
 patch_update_box() {
@@ -126,8 +126,8 @@ parse_arguments() {
     VERBOSE=false
     SHOW_HELP=false
 
-    while [[ ${#} -gt 0 ]]; do
-        case ${1} in
+    while [[ $# -gt 0 ]]; do
+        case "${1}" in
             -v|--verbose)
                 VERBOSE=true
                 shift
@@ -149,7 +149,7 @@ parse_arguments() {
         esac
     done
 
-    if [ "${SHOW_HELP}" = true ]; then
+    if [[ "${SHOW_HELP}" == true ]]; then
         show_help
     fi
 }
@@ -158,10 +158,16 @@ main() {
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
     . "${SCRIPT_DIR}/shared.sh"
 
-    parse_arguments "$@"
-    patch_dir=$(find . -maxdepth 1 -type d -name 'Common_[0-9][0-9][0-9][0-9].[0-9][0-9].[0-9][0-9].[0-9][0-9][0-9][0-9]' | head -n1)
+    if [[ "${OSTYPE}" == "darwin"* ]]; then
+        SED_FLAG="-i ''"
+    else
+        SED_FLAG="-i"
+    fi
 
-    if [ ! -d "${patch_dir}" ]; then
+    parse_arguments "$@"
+    local patch_dir="$(find . -maxdepth 1 -type d -name 'Common_[0-9][0-9][0-9][0-9].[0-9][0-9].[0-9][0-9].[0-9][0-9][0-9][0-9]' | head -n1)"
+
+    if [[ ! -d "${patch_dir}" ]]; then
         echo "Error: No matching 'Common_YYYY.MM.DD.HHHH' directory found."
         exit 1
     fi

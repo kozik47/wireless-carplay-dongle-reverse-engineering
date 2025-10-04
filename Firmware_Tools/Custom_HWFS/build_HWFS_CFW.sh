@@ -22,7 +22,7 @@ if (( ${BASH_VERSINFO[0]} < 4 )); then
     exit 1
 fi
 
-set -e
+set -euo pipefail
 
 get_sha256() {
     local file="${1}"
@@ -41,13 +41,15 @@ get_stat_info() {
 compute_content_meta_hash() {
     local dir="${1}"
     pushd "${dir}" >/dev/null
-    find . \( -type f -o -type d \) | sort | while read -r file; do
+    find . \( -type d -o -type f -o -type l \) | sort | while read -r file; do
         if [[ -d "${file}" ]]; then
             content_hash="DIR"
+        elif [[ -h "${file}" ]]; then
+            content_hash="SYM:$(readlink "${file}")"
         else
-            content_hash=$(get_sha256 "${file}")
+            content_hash="$(get_sha256 "${file}")"
         fi
-        stat_info=$(get_stat_info "${file}")
+        stat_info="$(get_stat_info "${file}")"
         read -r mtime uid gid perm <<< "${stat_info}"
         echo "${file}:${content_hash}:${mtime}:${uid}:${gid}:${perm}"
     done
@@ -92,8 +94,8 @@ parse_arguments() {
     OUTPUT_HWFS=""
     PATCH_SCRIPT="${SCRIPT_DIR}/patch_U2ACW.sh"
 
-    while [[ ${#} -gt 0 ]]; do
-        case ${1} in
+    while [[ $# -gt 0 ]]; do
+        case "${1}" in
             -v|--verbose)
                 VERBOSE=true
                 shift
@@ -120,7 +122,7 @@ parse_arguments() {
                     echo "Error: --patch-script requires a file argument."
                     exit 1
                 fi
-                PATCH_SCRIPT="${2}"
+                PATCH_SCRIPT="$(realpath "${2}")"
                 shift 2
                 ;;
             -*)
@@ -144,29 +146,29 @@ parse_arguments() {
         esac
     done
 
-    if [ "$SHOW_HELP" = true ]; then
+    if [[ "${SHOW_HELP}" == true ]]; then
         show_help
     fi
 
-    if [ "$SHOW_HELP" = false ]; then
+    if [[ "${SHOW_HELP}" == false ]]; then
         if [[ ${INPUT_SET} == false ]]; then
             echo "Error: No input file specified. Please provide the input HWFS file as a positional argument."
             show_help
             exit 1
         fi
 
-        if [ ! -f "${INPUT_HWFS}" ]; then
+        if [[ ! -f "${INPUT_HWFS}" ]]; then
             echo "Error: Input file '${INPUT_HWFS}' does not exist."
             exit 1
         fi
 
-        if [ ! -f "${PATCH_SCRIPT}" ]; then
+        if [[ ! -f "${PATCH_SCRIPT}" ]]; then
             echo "Error: Patch script '${PATCH_SCRIPT}' does not exist."
             exit 1
         fi
     fi
 
-    if [ "$VERBOSE" = true ]; then
+    if [[ "${VERBOSE}" == true ]]; then
         TAR_VFLAG=(-v)
         UNZIP_VFLAG=() # unzip is verbose by default
         ZIP_VFLAG=(-v)
@@ -182,11 +184,11 @@ parse_arguments() {
 }
 
 setup_work_dir() {
-    WORK_DIR=$(mktemp -d)
-    if [ "${KEEP}" != true ]; then
+    WORK_DIR="$(mktemp -d)"
+    if [[ "${KEEP}" != true ]]; then
         trap "rm -rf \"${WORK_DIR}\"" EXIT INT TERM
     fi
-
+    echo "Created working directory: ${WORK_DIR}"
     UNZIP_DIR="${WORK_DIR}/unzip"
     ORI_ZIP="${WORK_DIR}/$(basename "${INPUT_HWFS%.*}").zip"
     GEN_ZIP="${WORK_DIR}/$(basename "${INPUT_HWFS%.*}")_CFW.zip"
@@ -202,12 +204,13 @@ unzip_contents() {
     echo "Unzipping decrypted firmware to ${UNZIP_DIR}"
     mkdir -p "${UNZIP_DIR}"
     run unzip "${UNZIP_VFLAG[@]}" -o -d "${UNZIP_DIR}" "${ORI_ZIP}"
-    local files_count=$(find "${UNZIP_DIR}" -type f | wc -l | awk '{print $1}')
-    local total_size=$(du -sh "${UNZIP_DIR}" | awk '{print $1}')
+    local files_count="$(find "${UNZIP_DIR}" -type f | wc -l | awk '{print $1}')"
+    local total_size="$(du -sh "${UNZIP_DIR}" | awk '{print $1}')"
     echo "Unzipped ${files_count} files totaling ${total_size}"
 }
 
 backup_module_info() {
+    echo "Backing up original ModuleInfo.json"
     cp "${UNZIP_DIR}/ModuleInfo.json" "${UNZIP_DIR}/ModuleInfo_original.json"
 }
 
@@ -216,7 +219,8 @@ compute_original_hashes() {
     echo "Computing hashes for original ZIP contents..."
     for file in *; do
         if [[ -f "${file}" ]]; then
-            original_hashes["${file}"]=$(get_sha256 "${file}")
+            vecho "Computing hash for ${file}"
+            original_hashes["${file}"]="$(get_sha256 "${file}")"
         fi
     done
     popd >/dev/null
@@ -229,9 +233,9 @@ decrypt_and_extract_nested() {
     for hwfs_file in *.hwfs; do
         if [[ -f "${hwfs_file}" ]]; then
             ((nested_count+=1))
-            base_name="${hwfs_file%.hwfs}"
-            tar_gz="${base_name}.tar.gz"
-            extract_dir="${base_name}"
+            local base_name="${hwfs_file%.hwfs}"
+            local tar_gz="${base_name}.tar.gz"
+            local extract_dir="${base_name}"
             vecho "Decrypting nested HWFS: ${hwfs_file} to ${tar_gz}"
             run "${SCRIPT_DIR}/../FirmwareHWFS.sh" decrypt "${hwfs_file}" "${tar_gz}"
             vecho "Extracting: ${tar_gz} to ${extract_dir}/"
@@ -245,12 +249,13 @@ decrypt_and_extract_nested() {
 
 compute_original_content_hashes() {
     pushd "${UNZIP_DIR}" >/dev/null
-    echo "Computing hashes for original HWFS contents..."
+    echo "Computing meta hashes for original HWFS contents..."
     for hwfs_file in *.hwfs; do
         if [[ -f "${hwfs_file}" ]]; then
-            base_name="${hwfs_file%.hwfs}"
-            extract_dir="${base_name}"
-            original_content_hashes["${hwfs_file}"]=$(compute_content_meta_hash "${extract_dir}")
+            local base_name="${hwfs_file%.hwfs}"
+            local extract_dir="${base_name}"
+            vecho "Computing meta hashes for content in ${extract_dir}/"
+            original_content_hashes["${hwfs_file}"]="$(compute_content_meta_hash "${extract_dir}")"
         fi
     done
     popd >/dev/null
@@ -272,17 +277,20 @@ repack_changed_hwfs() {
     local changed_count=0
     for hwfs_file in *.hwfs; do
         if [[ -f "${hwfs_file}" ]]; then
-            base_name="${hwfs_file%.hwfs}"
-            tar_gz="${base_name}.tar.gz"
-            extract_dir="${base_name}"
-            new_content_hash=$(compute_content_meta_hash "${extract_dir}")
+            local base_name="${hwfs_file%.hwfs}"
+            local tar_gz="${base_name}.tar.gz"
+            local extract_dir="${base_name}"
+            local new_content_hash
+            new_content_hash="$(compute_content_meta_hash "${extract_dir}")"
             if [[ "${original_content_hashes["${hwfs_file}"]}" == "${new_content_hash}" ]]; then
                 vecho "No changes detected in ${hwfs_file}."
-                rm -f "${tar_gz}"
+                if [[ "${KEEP}" != true ]]; then
+                    rm -f "${tar_gz}"
+                fi
             else
                 ((changed_count+=1))
                 echo "Changes detected in ${hwfs_file}; updating in ZIP."
-                orig_gzip_mtime=$(python3 -c "$(cat <<EOF
+                local orig_gzip_mtime="$(python3 -c "$(cat <<EOF
 import struct
 with open('${tar_gz}', 'rb') as f:
     f.seek(4)
@@ -290,7 +298,7 @@ with open('${tar_gz}', 'rb') as f:
     mtime = struct.unpack('<I', mtime_bytes)[0]
     print(mtime)
 EOF
-)")
+)")"
                 python3 -c "$(cat <<EOF
 import tarfile, os
 orig = tarfile.open('${tar_gz}', 'r:gz')
@@ -350,23 +358,25 @@ new_tar.close()
 EOF
 )"
                 touch -d "@${orig_gzip_mtime}" "temp.tar"
-                SOURCE_DATE_EPOCH="${orig_gzip_mtime}" gzip -c < temp.tar > "${tar_gz}"
-                rm temp.tar
-                new_hwfs="${base_name}_new.hwfs"
+                vecho "Deflating temp.tar to ${tar_gz}"
+                SOURCE_DATE_EPOCH="${orig_gzip_mtime}" gzip -c < "temp.tar" > "${tar_gz}"
+                rm "temp.tar"
+                local new_hwfs="${base_name}_new.hwfs"
                 run "${SCRIPT_DIR}/../FirmwareHWFS.sh" encrypt "${tar_gz}" "${new_hwfs}"
                 mv "${hwfs_file}" "${hwfs_file}.bak"
                 mv "${new_hwfs}" "${hwfs_file}"
-                stat_info=$(get_stat_info "${hwfs_file}.bak")
+                local stat_info="$(get_stat_info "${hwfs_file}.bak")"
+                local perm
                 read -r _ _ _ perm <<< "${stat_info}"
                 chmod "${perm}" "${hwfs_file}"
                 run zip "${ZIP_VFLAG[@]}" -u "../$(basename "${GEN_ZIP}")" "${hwfs_file}"
-                if [ "$KEEP" != true ]; then
+                if [[ "${KEEP}" != true ]]; then
                     rm "${hwfs_file}.bak" "${tar_gz}"
                 fi
             fi
         fi
     done
-    if [ "$VERBOSE" != true ] && [ ${changed_count} -gt 0 ]; then
+    if [[ "${VERBOSE}" != true ]] && [[ ${changed_count} -gt 0 ]]; then
         echo "Updated ${changed_count} changed modules in ZIP"
     fi
     popd >/dev/null
@@ -378,7 +388,7 @@ update_module_info() {
     run "${SCRIPT_DIR}/update_HWFS_ModuleInfo.sh" "${UHMI_VFLAG[@]}" "${UNZIP_DIR}"
     local update_rc=$?
     set -e
-    if [ ${update_rc} -ne 0 ]; then
+    if [[ ${update_rc} -ne 0 ]]; then
         pushd "${UNZIP_DIR}" >/dev/null
         cp "ModuleInfo_original.json" "ModuleInfo.json"
         popd >/dev/null
@@ -389,7 +399,7 @@ update_module_info() {
 
 update_generated_zip_if_module_changed() {
     pushd "${UNZIP_DIR}" >/dev/null
-    new_module_hash=$(get_sha256 "ModuleInfo.json")
+    local new_module_hash="$(get_sha256 "ModuleInfo.json")"
     if [[ "${original_hashes["ModuleInfo.json"]}" != "${new_module_hash}" ]]; then
         echo "Changes detected in ModuleInfo.json; updating in ZIP."
         run zip -u "../$(basename "${GEN_ZIP}")" "ModuleInfo.json"
@@ -401,7 +411,12 @@ update_generated_zip_if_module_changed() {
 
 cleanup_module_backup() {
     pushd "${UNZIP_DIR}" >/dev/null
-    rm "ModuleInfo_original.json"
+    if [[ "${KEEP}" != true ]]; then
+        echo "Cleaning up original ModuleInfo.json backup"
+        rm "ModuleInfo_original.json"
+    else
+        echo "Original ModuleInfo.json backup kept"
+    fi
     popd >/dev/null
 }
 
@@ -413,7 +428,7 @@ encrypt_generated_zip() {
 copy_final_output() {
     cp "${GEN_HWFS}" "${OUTPUT_HWFS}"
     echo "Custom firmware built: ${OUTPUT_HWFS}"
-    if [ "${KEEP}" = true ]; then
+    if [[ "${KEEP}" == true ]]; then
         echo "Working directory kept: ${WORK_DIR}"
     fi
 }
@@ -435,10 +450,6 @@ main() {
 
     check_dependencies
     parse_arguments "$@"
-
-    if [ "${SHOW_HELP}" = true ]; then
-        show_help
-    fi
 
     setup_work_dir
     decrypt_top_level
