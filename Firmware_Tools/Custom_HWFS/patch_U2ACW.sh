@@ -53,6 +53,7 @@ copy_dropbear_bins() {
             exit 1
         fi
         cp -p "${SCRIPT_DIR}/bins/${bin}" "usr/sbin/"
+        chmod 775 "usr/sbin/${bin}"
     done
 
     vecho "Creating symlink for sftp-server in usr/libexec/"
@@ -94,7 +95,7 @@ EOF
 root::14610:0:99999:7:::
 EOF
 
-    chmod 644 "${passwd_file}" "${shadow_file}"
+    chmod 775 "${passwd_file}" "${shadow_file}"
 }
 
 patch_update_box() {

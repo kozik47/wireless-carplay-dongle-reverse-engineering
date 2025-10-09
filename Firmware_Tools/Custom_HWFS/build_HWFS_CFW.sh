@@ -71,7 +71,7 @@ show_help() {
 }
 
 check_dependencies() {
-    local deps="python3 unzip zip tar"
+    local deps="python3 unzip zip tar openssl"
     for dep in ${deps}; do
         if ! command -v "${dep}" >/dev/null 2>&1; then
             echo "Error: ${dep} is not installed. Please install it and try again."
@@ -300,7 +300,45 @@ with open('${tar_gz}', 'rb') as f:
 EOF
 )")"
                 python3 -c "$(cat <<EOF
-import tarfile, os
+import tarfile, os, pwd, grp, stat
+def set_uid_gid(ti, old_ti, stat_info):
+    if old_ti == None:
+        ti.uid = members[0].uid
+        ti.gid = members[0].gid
+        ti.uname = members[0].uname
+        ti.gname = members[0].gname
+    else:
+        ti.uid = stat_info.st_uid
+        ti.gid = stat_info.st_gid
+        # Preserve the original uname/gname for now
+        ti.uname = old_ti.uname
+        ti.gname = old_ti.gname
+        #ti.uname = pwd.getpwuid(stat_info.st_uid)[0]
+        #ti.gname = grp.getgrgid(stat_info.st_gid)[0]
+def add_file(arcname, full_path, old_ti):
+    ti = tarfile.TarInfo(arcname)
+    stat_info = os.lstat(full_path)
+    ti.mtime = stat_info.st_mtime
+    ti.mode = stat_info.st_mode
+    if stat.S_ISLNK(stat_info.st_mode):
+        ti.type = tarfile.SYMTYPE
+        ti.linkname = str(os.readlink(full_path))
+        ti.size = 0
+        set_uid_gid(ti, old_ti, stat_info)
+        new_tar.addfile(ti)
+    elif stat.S_ISREG(stat_info.st_mode):
+        with open(full_path, 'rb') as f:
+            ti.type = tarfile.REGTYPE
+            ti.size = stat_info.st_size
+            set_uid_gid(ti, old_ti, stat_info)
+            new_tar.addfile(ti, fileobj=f)
+    elif stat.S_ISDIR(stat_info.st_mode):
+        ti.type = tarfile.DIRTYPE
+        ti.size = 0
+        set_uid_gid(ti, old_ti, stat_info)
+        new_tar.addfile(ti)
+    else:
+        raise TypeError("Only REGTYPE, LNKTYPE and DIRTYPE supported")
 orig = tarfile.open('${tar_gz}', 'r:gz')
 members = orig.getmembers()
 original_names = {m.name for m in members}
@@ -308,52 +346,15 @@ new_tar = tarfile.open('temp.tar', 'w', format=tarfile.GNU_FORMAT)
 for ti in members:
     path = os.path.join('${extract_dir}', ti.name.lstrip('./'))
     if os.path.exists(path):
-        if ti.isdir():
-            stat = os.stat(path)
-            ti.mtime = stat.st_mtime
-            ti.mode = stat.st_mode
-            ti.uid = stat.st_uid
-            ti.gid = stat.st_gid
-            new_tar.addfile(ti)
-        elif ti.type == b'2':  # Symlink
-            stat = os.lstat(path)
-            ti.mtime = stat.st_mtime
-            ti.size = 0
-            ti.mode = stat.st_mode
-            ti.uid = stat.st_uid
-            ti.gid = stat.st_gid
-            new_tar.addfile(ti)
-        else:
-            with open(path, 'rb') as f:
-                stat = os.stat(path)
-                ti.mtime = stat.st_mtime
-                ti.size = stat.st_size
-                ti.mode = stat.st_mode
-                ti.uid = stat.st_uid
-                ti.gid = stat.st_gid
-                new_tar.addfile(ti, fileobj=f)
+        add_file(ti.name, path, ti)
 orig.close()
 for root, dirs, files in os.walk('${extract_dir}'):
-    for file in files:
-        full_path = os.path.join(root, file)
+    for node in files + dirs:
+        full_path = os.path.join(root, node)
         rel_path = os.path.relpath(full_path, '${extract_dir}')
         arcname = './' + rel_path.replace(os.sep, '/')
         if arcname not in original_names:
-            new_tar.add(full_path, arcname=arcname)
-    for d in dirs:
-        full_path = os.path.join(root, d)
-        rel_path = os.path.relpath(full_path, '${extract_dir}')
-        arcname = './' + rel_path.replace(os.sep, '/')
-        if arcname not in original_names:
-            ti = tarfile.TarInfo(arcname)
-            stat = os.stat(full_path)
-            ti.mtime = stat.st_mtime
-            ti.size = 0
-            ti.mode = stat.st_mode
-            ti.uid = stat.st_uid
-            ti.gid = stat.st_gid
-            ti.type = tarfile.DIRTYPE
-            new_tar.addfile(ti)
+           add_file(arcname, full_path, None)
 new_tar.close()
 EOF
 )"
