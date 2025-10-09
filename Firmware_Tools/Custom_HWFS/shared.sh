@@ -25,7 +25,7 @@ run() {
             exit "${status}"
         fi
     else
-        "$@" >/dev/null 2>&1
+        "$@" >/dev/null
     fi
 }
 

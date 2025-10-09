@@ -19,7 +19,7 @@ set -euo pipefail
 
 check_dependencies() {
     if ! command -v jq >/dev/null 2>&1; then
-        echo "Error: jq is not installed. Please install it and try again."
+        echo "Error: jq is not installed. Please install it and try again." 1>&2
         exit 1
     fi
 }

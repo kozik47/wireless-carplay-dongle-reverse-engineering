@@ -16,9 +16,9 @@
 # all copies or substantial portions of the Software.
 
 if (( ${BASH_VERSINFO[0]} < 4 )); then
-    echo "Error: This script requires Bash version 4 or higher."
-    echo "On macOS, install a newer Bash via Homebrew: brew install bash"
-    echo "Then run the script with the new Bash: /opt/homebrew/bin/bash ./build_HWFS_CFW.sh"
+    echo "Error: This script requires Bash version 4 or higher." 1>&2
+    echo "On macOS, install a newer Bash via Homebrew: brew install bash" 1>&2
+    echo "Then run the script with the new Bash: /opt/homebrew/bin/bash ./build_HWFS_CFW.sh" 1>&2
     exit 1
 fi
 
@@ -74,12 +74,12 @@ check_dependencies() {
     local deps="python3 unzip zip tar openssl"
     for dep in ${deps}; do
         if ! command -v "${dep}" >/dev/null 2>&1; then
-            echo "Error: ${dep} is not installed. Please install it and try again."
+            echo "Error: ${dep} is not installed. Please install it and try again." 1>&2
             exit 1
         fi
     done
     if ! (command -v sha256sum >/dev/null 2>&1 || command -v shasum >/dev/null 2>&1); then
-        echo "Error: No SHA-256 hashing tool (sha256sum or shasum) is available. Please install one and try again."
+        echo "Error: No SHA-256 hashing tool (sha256sum or shasum) is available. Please install one and try again." 1>&2
         exit 1
     fi
 }
